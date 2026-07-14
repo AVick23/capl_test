@@ -471,10 +471,9 @@ def forecast_linear(x, y, steps=7):
 
 def generate_dashboard():
     """
-    Генерация дашборда в стиле Apple с прогнозом.
+    Генерация дашборда в стиле Apple: воздушный, минималистичный, с KPI-карточками.
     """
     data = get_all_data()
-    
     if not data:
         return None, None
     
@@ -493,107 +492,392 @@ def generate_dashboard():
     profit_forecast = forecast_linear(x, df['net_profit'].values, steps=7)
     check_forecast = forecast_linear(x, df['avg_check'].values, steps=7)
     
-    # Создаём фигуру с 3 основными графиками + 1 для прогноза
-    fig = plt.figure(figsize=(18, 12))
-    fig.patch.set_facecolor('white')
-    
-    # Стиль Apple: чистый, sans-serif, серые линии
-    plt.rcParams['font.family'] = 'Helvetica Neue, Arial, sans-serif'
-    plt.rcParams['axes.edgecolor'] = '#d0d0d0'
-    plt.rcParams['axes.linewidth'] = 0.5
-    plt.rcParams['grid.color'] = '#f0f0f0'
-    
-    # 1. Продажи и прогноз
-    ax1 = plt.subplot(2, 2, 1)
-    ax1.set_facecolor('white')
-    ax1.bar(df['date'], df['sales'], color='#007AFF', alpha=0.7, label='Факт')
-    # Добавляем прогноз (линия)
-    future_dates = [f"прогноз {i+1}" for i in range(7)]  # подписи для прогноза
-    all_dates = list(df['date']) + future_dates
-    all_sales = list(df['sales']) + list(sales_forecast)
-    ax1.plot(all_dates, all_sales, '--', color='#FF9500', linewidth=2, label='Прогноз')
-    ax1.set_title('Продажи и прогноз', fontsize=16, fontweight='bold', color='#1C1C1E')
-    ax1.set_xticklabels(all_dates, rotation=45, ha='right', fontsize=8)
-    ax1.grid(axis='y', linestyle='--', alpha=0.4)
-    ax1.legend(loc='upper left')
-    # Аннотация с суммой
+    # Итоговые метрики
     total_sales = df['sales'].sum()
-    ax1.text(0.02, 0.95, f'Всего: {total_sales:,.0f}', transform=ax1.transAxes,
-             fontsize=12, verticalalignment='top', bbox=dict(facecolor='white', alpha=0.8))
-    
-    # 2. Чистая прибыль и прогноз
-    ax2 = plt.subplot(2, 2, 2)
-    ax2.set_facecolor('white')
-    colors = ['#34C759' if p >= 0 else '#FF3B30' for p in df['net_profit']]
-    ax2.bar(df['date'], df['net_profit'], color=colors, alpha=0.7, label='Факт')
-    all_profit = list(df['net_profit']) + list(profit_forecast)
-    ax2.plot(all_dates, all_profit, '--', color='#FF9500', linewidth=2, label='Прогноз')
-    ax2.axhline(y=0, color='#8E8E93', linewidth=0.5, linestyle='-')
-    ax2.set_title('Чистая прибыль и прогноз', fontsize=16, fontweight='bold', color='#1C1C1E')
-    ax2.set_xticklabels(all_dates, rotation=45, ha='right', fontsize=8)
-    ax2.grid(axis='y', linestyle='--', alpha=0.4)
-    ax2.legend(loc='upper left')
     total_profit = df['net_profit'].sum()
-    ax2.text(0.02, 0.95, f'Всего: {total_profit:,.0f}', transform=ax2.transAxes,
-             fontsize=12, verticalalignment='top', bbox=dict(facecolor='white', alpha=0.8))
-    
-    # 3. Средний чек и прогноз
-    ax3 = plt.subplot(2, 2, 3)
-    ax3.set_facecolor('white')
-    ax3.plot(df['date'], df['avg_check'], marker='o', color='#007AFF', linewidth=2, label='Факт')
-    all_check = list(df['avg_check']) + list(check_forecast)
-    ax3.plot(all_dates, all_check, '--', color='#FF9500', linewidth=2, label='Прогноз')
-    ax3.set_title('Средний чек и прогноз', fontsize=16, fontweight='bold', color='#1C1C1E')
-    ax3.set_xticklabels(all_dates, rotation=45, ha='right', fontsize=8)
-    ax3.grid(axis='y', linestyle='--', alpha=0.4)
-    ax3.legend(loc='upper left')
-    avg_check_mean = df['avg_check'].mean()
-    ax3.text(0.02, 0.95, f'Средний: {avg_check_mean:,.0f}', transform=ax3.transAxes,
-             fontsize=12, verticalalignment='top', bbox=dict(facecolor='white', alpha=0.8))
-    
-    # 4. Структура (пирог) + метрики
-    ax4 = plt.subplot(2, 2, 4)
-    ax4.set_facecolor('white')
-    total_cost = df['cost'].sum()
     total_expenses = df['expenses'].sum()
-    total_profit_pie = df['net_profit'].sum()
+    total_cost = df['cost'].sum()
+    avg_check = df['avg_check'].mean()
+    days = len(df)
     
-    if total_profit_pie > 0:
-        sizes = [total_cost, total_expenses, total_profit_pie]
+    # Тренды (наклон)
+    if len(df) >= 2:
+        sales_slope = np.polyfit(np.arange(len(df)), df['sales'], 1)[0]
+        profit_slope = np.polyfit(np.arange(len(df)), df['net_profit'], 1)[0]
+        check_slope = np.polyfit(np.arange(len(df)), df['avg_check'], 1)[0]
+    else:
+        sales_slope = profit_slope = check_slope = 0
+    
+    # ============================================
+    # НАСТРОЙКА СТИЛЯ APPLE
+    # ============================================
+    plt.rcParams.update({
+        'font.family': 'Helvetica Neue, Arial, sans-serif',
+        'font.size': 11,
+        'axes.edgecolor': '#E5E5EA',
+        'axes.linewidth': 0.5,
+        'axes.labelcolor': '#1C1C1E',
+        'axes.titlecolor': '#1C1C1E',
+        'xtick.color': '#8E8E93',
+        'ytick.color': '#8E8E93',
+        'grid.color': '#F2F2F7',
+        'grid.linewidth': 0.5,
+        'grid.alpha': 0.8,
+        'figure.facecolor': '#F5F5F7',
+        'axes.facecolor': '#FFFFFF',
+    })
+    
+    # Цвета Apple
+    APPLE_BLUE = '#007AFF'
+    APPLE_GREEN = '#34C759'
+    APPLE_RED = '#FF3B30'
+    APPLE_ORANGE = '#FF9500'
+    APPLE_GRAY = '#8E8E93'
+    APPLE_DARK = '#1C1C1E'
+    APPLE_LIGHT = '#F2F2F7'
+    
+    # ============================================
+    # СОЗДАНИЕ ФИГУРЫ С GRIDSPEC
+    # ============================================
+    fig = plt.figure(figsize=(20, 14))
+    
+    # GridSpec: 3 строки (KPI, графики 2x2, пусто)
+    gs = fig.add_gridspec(3, 4, height_ratios=[1.2, 3, 3], hspace=0.35, wspace=0.3)
+    
+    # ============================================
+    # ЗАГОЛОВОК
+    # ============================================
+    fig.suptitle(
+        'Аналитика ПНЛ',
+        fontsize=28,
+        fontweight='bold',
+        color=APPLE_DARK,
+        y=0.98,
+        x=0.5
+    )
+    
+    # Подзаголовок с периодом
+    fig.text(
+        0.5, 0.94,
+        f'Период: {df["date"].iloc[0]} — {df["date"].iloc[-1]}  •  {days} дней',
+        fontsize=13,
+        color=APPLE_GRAY,
+        ha='center'
+    )
+    
+    # ============================================
+    # KPI КАРТОЧКИ (верхняя строка)
+    # ============================================
+    kpi_data = [
+        {
+            'title': 'Продажи',
+            'value': total_sales,
+            'format': '{:,.0f} ₽',
+            'color': APPLE_BLUE,
+            'trend': sales_slope,
+            'trend_label': 'в день'
+        },
+        {
+            'title': 'Чистая прибыль',
+            'value': total_profit,
+            'format': '{:,.0f} ₽',
+            'color': APPLE_GREEN if total_profit >= 0 else APPLE_RED,
+            'trend': profit_slope,
+            'trend_label': 'в день'
+        },
+        {
+            'title': 'Расходы',
+            'value': total_expenses,
+            'format': '{:,.0f} ₽',
+            'color': APPLE_RED,
+            'trend': 0,
+            'trend_label': ''
+        },
+        {
+            'title': 'Средний чек',
+            'value': avg_check,
+            'format': '{:,.0f} ₽',
+            'color': APPLE_ORANGE,
+            'trend': check_slope,
+            'trend_label': 'в день'
+        }
+    ]
+    
+    for i, kpi in enumerate(kpi_data):
+        ax = fig.add_subplot(gs[0, i])
+        ax.set_facecolor('#FFFFFF')
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        
+        # Скруглённый прямоугольник (карточка)
+        rect = plt.Rectangle(
+            (0.02, 0.1), 0.96, 0.85,
+            transform=ax.transAxes,
+            facecolor='#FFFFFF',
+            edgecolor='#E5E5EA',
+            linewidth=1,
+            clip_on=False,
+            zorder=1
+        )
+        ax.add_patch(rect)
+        
+        # Цветная полоска сверху
+        color_bar = plt.Rectangle(
+            (0.02, 0.92), 0.96, 0.03,
+            transform=ax.transAxes,
+            facecolor=kpi['color'],
+            clip_on=False,
+            zorder=2
+        )
+        ax.add_patch(color_bar)
+        
+        # Заголовок карточки
+        ax.text(
+            0.5, 0.75, kpi['title'],
+            transform=ax.transAxes,
+            fontsize=12,
+            color=APPLE_GRAY,
+            ha='center',
+            va='center',
+            fontweight='normal'
+        )
+        
+        # Значение
+        ax.text(
+            0.5, 0.50, kpi['format'].format(kpi['value']),
+            transform=ax.transAxes,
+            fontsize=22,
+            color=APPLE_DARK,
+            ha='center',
+            va='center',
+            fontweight='bold'
+        )
+        
+        # Тренд
+        if kpi['trend'] != 0:
+            trend_icon = '↑' if kpi['trend'] > 0 else '↓'
+            trend_color = APPLE_GREEN if kpi['trend'] > 0 else APPLE_RED
+            ax.text(
+                0.5, 0.25,
+                f'{trend_icon} {abs(kpi["trend"]):,.0f} {kpi["trend_label"]}',
+                transform=ax.transAxes,
+                fontsize=11,
+                color=trend_color,
+                ha='center',
+                va='center',
+                fontweight='500'
+            )
+    
+    # ============================================
+    # ГРАФИК 1: ПРОДАЖИ И ПРОГНОЗ
+    # ============================================
+    ax1 = fig.add_subplot(gs[1, :2])
+    
+    # Факт — столбцы
+    ax1.bar(
+        range(len(df)), df['sales'],
+        color=APPLE_BLUE, alpha=0.85,
+        width=0.6, label='Факт', zorder=2
+    )
+    
+    # Прогноз — пунктирная линия, продолжающая факт
+    forecast_x = np.arange(len(df), len(df) + 7)
+    ax1.plot(
+        forecast_x, sales_forecast,
+        '--', color=APPLE_ORANGE, linewidth=2.5,
+        label='Прогноз (7 дней)', zorder=3, marker='o', markersize=4
+    )
+    
+    # Вертикальная линия разделения факт/прогноз
+    ax1.axvline(
+        x=len(df) - 0.5,
+        color=APPLE_GRAY, linewidth=1, linestyle=':', alpha=0.5, zorder=1
+    )
+    
+    ax1.set_title('Продажи', fontsize=18, fontweight='bold', pad=15, loc='left')
+    ax1.set_ylabel('Сумма, ₽', fontsize=12, color=APPLE_GRAY, labelpad=10)
+    ax1.set_xticks(range(len(df) + 7))
+    ax1.set_xticklabels(
+        list(df['date']) + [f'+{i+1}' for i in range(7)],
+        rotation=45, ha='right', fontsize=9, color=APPLE_GRAY
+    )
+    ax1.grid(axis='y', linestyle='-', alpha=0.5)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    ax1.legend(loc='upper left', frameon=False, fontsize=10)
+    
+    # Аннотация с итогом
+    ax1.text(
+        0.98, 0.95, f'Итого: {total_sales:,.0f} ₽',
+        transform=ax1.transAxes,
+        fontsize=12, color=APPLE_DARK,
+        ha='right', va='top',
+        bbox=dict(facecolor='#FFFFFF', alpha=0.9, edgecolor='#E5E5EA', boxstyle='round,pad=0.5')
+    )
+    
+    # ============================================
+    # ГРАФИК 2: ЧИСТАЯ ПРИБЫЛЬ И ПРОГНОЗ
+    # ============================================
+    ax2 = fig.add_subplot(gs[1, 2:])
+    
+    colors_profit = [APPLE_GREEN if p >= 0 else APPLE_RED for p in df['net_profit']]
+    ax2.bar(
+        range(len(df)), df['net_profit'],
+        color=colors_profit, alpha=0.85,
+        width=0.6, label='Факт', zorder=2
+    )
+    
+    ax2.plot(
+        forecast_x, profit_forecast,
+        '--', color=APPLE_ORANGE, linewidth=2.5,
+        label='Прогноз (7 дней)', zorder=3, marker='o', markersize=4
+    )
+    
+    ax2.axhline(y=0, color=APPLE_DARK, linewidth=0.8, linestyle='-', zorder=1)
+    ax2.axvline(
+        x=len(df) - 0.5,
+        color=APPLE_GRAY, linewidth=1, linestyle=':', alpha=0.5, zorder=1
+    )
+    
+    ax2.set_title('Чистая прибыль', fontsize=18, fontweight='bold', pad=15, loc='left')
+    ax2.set_ylabel('Сумма, ₽', fontsize=12, color=APPLE_GRAY, labelpad=10)
+    ax2.set_xticks(range(len(df) + 7))
+    ax2.set_xticklabels(
+        list(df['date']) + [f'+{i+1}' for i in range(7)],
+        rotation=45, ha='right', fontsize=9, color=APPLE_GRAY
+    )
+    ax2.grid(axis='y', linestyle='-', alpha=0.5)
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+    ax2.legend(loc='upper left', frameon=False, fontsize=10)
+    
+    ax2.text(
+        0.98, 0.95, f'Итого: {total_profit:,.0f} ₽',
+        transform=ax2.transAxes,
+        fontsize=12, color=APPLE_DARK,
+        ha='right', va='top',
+        bbox=dict(facecolor='#FFFFFF', alpha=0.9, edgecolor='#E5E5EA', boxstyle='round,pad=0.5')
+    )
+    
+    # ============================================
+    # ГРАФИК 3: СРЕДНИЙ ЧЕК И ПРОГНОЗ
+    # ============================================
+    ax3 = fig.add_subplot(gs[2, :2])
+    
+    ax3.plot(
+        range(len(df)), df['avg_check'],
+        '-', color=APPLE_BLUE, linewidth=2.5,
+        label='Факт', zorder=3, marker='o', markersize=6, markerfacecolor='white', markeredgewidth=2
+    )
+    
+    ax3.plot(
+        forecast_x, check_forecast,
+        '--', color=APPLE_ORANGE, linewidth=2.5,
+        label='Прогноз (7 дней)', zorder=3, marker='o', markersize=4
+    )
+    
+    ax3.axvline(
+        x=len(df) - 0.5,
+        color=APPLE_GRAY, linewidth=1, linestyle=':', alpha=0.5, zorder=1
+    )
+    
+    ax3.set_title('Средний чек', fontsize=18, fontweight='bold', pad=15, loc='left')
+    ax3.set_ylabel('Сумма, ₽', fontsize=12, color=APPLE_GRAY, labelpad=10)
+    ax3.set_xticks(range(len(df) + 7))
+    ax3.set_xticklabels(
+        list(df['date']) + [f'+{i+1}' for i in range(7)],
+        rotation=45, ha='right', fontsize=9, color=APPLE_GRAY
+    )
+    ax3.grid(axis='y', linestyle='-', alpha=0.5)
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+    ax3.legend(loc='upper left', frameon=False, fontsize=10)
+    
+    ax3.text(
+        0.98, 0.95, f'Средний: {avg_check:,.0f} ₽',
+        transform=ax3.transAxes,
+        fontsize=12, color=APPLE_DARK,
+        ha='right', va='top',
+        bbox=dict(facecolor='#FFFFFF', alpha=0.9, edgecolor='#E5E5EA', boxstyle='round,pad=0.5')
+    )
+    
+    # ============================================
+    # ГРАФИК 4: СТРУКТУРА (ПИРОГ + МЕТРИКИ)
+    # ============================================
+    ax4 = fig.add_subplot(gs[2, 2:])
+    
+    # Данные для пирога
+    if total_profit > 0:
+        sizes = [total_cost, total_expenses, total_profit]
         labels = ['Себестоимость', 'Расходы', 'Прибыль']
-        colors_pie = ['#8E8E93', '#FF3B30', '#34C759']
+        colors_pie = [APPLE_GRAY, APPLE_RED, APPLE_GREEN]
     else:
         sizes = [total_cost, total_expenses]
         labels = ['Себестоимость', 'Расходы']
-        colors_pie = ['#8E8E93', '#FF3B30']
+        colors_pie = [APPLE_GRAY, APPLE_RED]
     
-    ax4.pie(sizes, labels=labels, colors=colors_pie, autopct='%1.1f%%',
-            startangle=90, textprops={'fontsize': 12},
-            wedgeprops={'edgecolor': 'white', 'linewidth': 1})
-    ax4.set_title('Структура затрат и прибыли', fontsize=16, fontweight='bold', color='#1C1C1E')
+    wedges, texts, autotexts = ax4.pie(
+        sizes, labels=None, colors=colors_pie,
+        autopct='%1.1f%%', startangle=90,
+        pctdistance=0.75,
+        wedgeprops={'edgecolor': '#FFFFFF', 'linewidth': 2, 'width': 0.7}
+    )
     
-    # Добавляем текстовые метрики под графиком или в углу
-    metrics_text = f"Продажи: {total_sales:,.0f}\nПрибыль: {total_profit_pie:,.0f}\nРасходы: {total_expenses:,.0f}"
-    ax4.text(-1.2, -1.2, metrics_text, transform=ax4.transAxes,
-             fontsize=11, verticalalignment='bottom',
-             bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'))
+    # Стилизация процентов
+    for autotext in autotexts:
+        autotext.set_color('#FFFFFF')
+        autotext.set_fontsize(13)
+        autotext.set_fontweight('bold')
     
-    plt.tight_layout()
+    ax4.set_title('Структура', fontsize=18, fontweight='bold', pad=15, loc='left')
     
-    # Сохраняем
+    # Легенда справа с метриками
+    legend_y = 0.85
+    legend_x = 1.15
+    for i, (label, size, color) in enumerate(zip(labels, sizes, colors_pie)):
+        pct = size / sum(sizes) * 100
+        ax4.text(
+            legend_x, legend_y - i * 0.25,
+            f'■ {label}',
+            transform=ax4.transAxes,
+            fontsize=12, color=APPLE_DARK,
+            va='center'
+        )
+        ax4.text(
+            legend_x + 0.35, legend_y - i * 0.25,
+            f'{size:,.0f} ₽ ({pct:.1f}%)',
+            transform=ax4.transAxes,
+            fontsize=11, color=APPLE_GRAY,
+            va='center', fontweight='500'
+        )
+    
+    ax4.axis('equal')
+    
+    # ============================================
+    # СОХРАНЕНИЕ
+    # ============================================
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
     filename = 'dashboard.png'
-    plt.savefig(filename, dpi=180, bbox_inches='tight', facecolor='white')
+    plt.savefig(
+        filename, dpi=150, bbox_inches='tight',
+        facecolor='#F5F5F7', edgecolor='none'
+    )
     plt.close()
     
-    # Генерируем расширенную аналитику с прогнозом
-    analytics = generate_analytics_text(df, sales_forecast, profit_forecast, check_forecast)
+    # Генерируем текстовую аналитику
+    analytics = generate_analytics_text(
+        df, sales_forecast, profit_forecast, check_forecast,
+        sales_slope, profit_slope, check_slope
+    )
     
     return filename, analytics
 
 
-def generate_analytics_text(df, sales_forecast, profit_forecast, check_forecast):
+def generate_analytics_text(df, sales_forecast, profit_forecast, check_forecast,
+                           sales_slope, profit_slope, check_slope):
     """
-    Генерация текстовой аналитики с прогнозными значениями.
+    Генерация текстовой аналитики в стиле Apple — кратко, по делу, с эмодзи.
     """
     total_sales = df['sales'].sum()
     total_profit = df['net_profit'].sum()
@@ -609,53 +893,83 @@ def generate_analytics_text(df, sales_forecast, profit_forecast, check_forecast)
     forecast_sales_sum = sales_forecast.sum() if len(sales_forecast) > 0 else 0
     forecast_profit_sum = profit_forecast.sum() if len(profit_forecast) > 0 else 0
     
-    # Среднедневной прирост (коэффициент тренда)
-    if len(df) >= 2:
-        sales_slope = np.polyfit(np.arange(len(df)), df['sales'], 1)[0]
-        profit_slope = np.polyfit(np.arange(len(df)), df['net_profit'], 1)[0]
-    else:
-        sales_slope = 0
-        profit_slope = 0
+    # Тренды
+    sales_trend_icon = '📈' if sales_slope > 0 else '📉' if sales_slope < 0 else '➡️'
+    profit_trend_icon = '📈' if profit_slope > 0 else '📉' if profit_slope < 0 else '➡️'
     
-    text = "📊 АНАЛИТИКА\n\n"
+    # Анализ
+    good = []
+    bad = []
+    
+    if total_profit > 0:
+        good.append(f"Прибыль положительная: {total_profit:,.0f} ₽")
+    else:
+        bad.append(f"Убыток: {total_profit:,.0f} ₽")
+    
+    if avg_daily_profit > 5000:
+        good.append(f"Средний день прибыльный: {avg_daily_profit:,.0f} ₽")
+    elif avg_daily_profit < 0:
+        bad.append(f"Средний день убыточный: {avg_daily_profit:,.0f} ₽")
+    
+    if total_sales > 0:
+        cost_pct = total_cost / total_sales * 100
+        exp_pct = total_expenses / total_sales * 100
+        
+        if cost_pct < 40:
+            good.append(f"Низкая себестоимость: {cost_pct:.1f}%")
+        elif cost_pct > 50:
+            bad.append(f"Высокая себестоимость: {cost_pct:.1f}%")
+        
+        if exp_pct < 40:
+            good.append(f"Контролируемые расходы: {exp_pct:.1f}%")
+        elif exp_pct > 60:
+            bad.append(f"Расходы слишком высокие: {exp_pct:.1f}%")
+    
+    # Формирование текста
+    text = "📊 АНАЛИТИКА ПНЛ\n\n"
     
     # Основные показатели
-    text += f"💰 Продажи: {total_sales:,.0f}\n"
-    text += f"💸 Себестоимость: {total_cost:,.0f} ({total_cost/total_sales*100:.1f}%)\n" if total_sales > 0 else "💸 Себестоимость: 0\n"
-    text += f"📉 Расходы: {total_expenses:,.0f} ({total_expenses/total_sales*100:.1f}%)\n" if total_sales > 0 else "📉 Расходы: 0\n"
-    text += f"📈 Чистая прибыль: {total_profit:,.0f}\n\n"
+    text += "💰 ОСНОВНЫЕ ПОКАЗАТЕЛИ\n"
+    text += f"• Продажи: {total_sales:,.0f} ₽\n"
+    text += f"• Себестоимость: {total_cost:,.0f} ₽"
+    if total_sales > 0:
+        text += f" ({total_cost/total_sales*100:.1f}%)"
+    text += "\n"
+    text += f"• Расходы: {total_expenses:,.0f} ₽"
+    if total_sales > 0:
+        text += f" ({total_expenses/total_sales*100:.1f}%)"
+    text += "\n"
+    text += f"• Чистая прибыль: {total_profit:,.0f} ₽\n\n"
+    
+    # Средние
+    text += "📈 СРЕДНИЕ ПОКАЗАТЕЛИ\n"
+    text += f"• Продажи/день: {avg_daily_sales:,.0f} ₽\n"
+    text += f"• Прибыль/день: {avg_daily_profit:,.0f} ₽\n"
+    text += f"• Средний чек: {avg_check:,.0f} ₽\n\n"
     
     # Что хорошо
-    good = []
-    if total_profit > 0:
-        good.append(f"✅ Прибыль положительная: {total_profit:,.0f}")
-    if avg_daily_profit > 10000:
-        good.append(f"✅ Средний день: {avg_daily_profit:,.0f}")
-    
-    text += "🟢 ХОРОШО:\n"
-    text += "\n".join(good) if good else "— нет замечаний\n"
+    if good:
+        text += "✅ ХОРОШО\n"
+        for item in good:
+            text += f"• {item}\n"
+        text += "\n"
     
     # Что плохо
-    bad = []
-    if total_profit < 0:
-        bad.append(f"❌ Убыток: {total_profit:,.0f}")
-    if total_expenses / total_sales > 0.5 if total_sales > 0 else False:
-        bad.append(f"❌ Высокие расходы: {total_expenses/total_sales*100:.1f}%")
-    if total_cost / total_sales > 0.4 if total_sales > 0 else False:
-        bad.append(f"❌ Высокая себестоимость: {total_cost/total_sales*100:.1f}%")
-    
-    text += "\n🔴 ПЛОХО:\n"
-    text += "\n".join(bad) if bad else "— нет замечаний\n"
-    
-    # Средние показатели
-    text += f"\n📊 СРЕДНИЕ:\n"
-    text += f"• Продажи/день: {avg_daily_sales:,.0f}\n"
-    text += f"• Прибыль/день: {avg_daily_profit:,.0f}\n"
-    text += f"• Средний чек: {avg_check:,.0f}\n\n"
+    if bad:
+        text += "⚠️ ТРЕБУЕТ ВНИМАНИЯ\n"
+        for item in bad:
+            text += f"• {item}\n"
+        text += "\n"
     
     # Прогноз
-    text += "📈 ПРОГНОЗ НА 7 ДНЕЙ (линейный тренд):\n"
-    text += f"• Ожидаемые продажи: {forecast_sales_sum:,.0f} (среднедневной прирост {sales_slope:,.0f})\n"
-    text += f"• Ожидаемая прибыль: {forecast_profit_sum:,.0f} (среднедневной прирост {profit_slope:,.0f})\n"
+    text += "🔮 ПРОГНОЗ НА 7 ДНЕЙ\n"
+    text += f"{sales_trend_icon} Продажи: ~{forecast_sales_sum:,.0f} ₽"
+    if sales_slope != 0:
+        text += f" (тренд {sales_slope:+,.0f}/день)"
+    text += "\n"
+    text += f"{profit_trend_icon} Прибыль: ~{forecast_profit_sum:,.0f} ₽"
+    if profit_slope != 0:
+        text += f" (тренд {profit_slope:+,.0f}/день)"
+    text += "\n"
     
     return text
