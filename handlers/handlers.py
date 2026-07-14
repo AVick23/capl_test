@@ -10,14 +10,26 @@ from telegram.ext import (
 from .constants import *
 from .keyboards import *
 from .utils import *
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
-    await update.message.reply_text(
-        START_MESSAGE,
-        reply_markup=main_menu_keyboard()
-    )
+    # Если это сообщение (не callback)
+    if update.message:
+        await update.message.reply_text(
+            START_MESSAGE,
+            reply_markup=main_menu_keyboard()
+        )
+    # Если это callback (например, после /start в conversation)
+    elif update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(
+            START_MESSAGE,
+            reply_markup=main_menu_keyboard()
+        )
     return MENU
 
 
@@ -105,7 +117,7 @@ async def process_sales(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{INVALID_FORMAT}\n\n{ENTER_SALES}",
             reply_markup=back_keyboard()
         )
-        return CHECKS
+        return SALES
 
 
 async def process_checks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,7 +138,7 @@ async def process_checks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{INVALID_FORMAT}\n\n{ENTER_CHECKS}",
             reply_markup=back_keyboard()
         )
-        return COST_PRICE
+        return CHECKS
 
 
 async def process_cost_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,7 +159,7 @@ async def process_cost_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"{INVALID_FORMAT}\n\n{ENTER_COST_PRICE}",
             reply_markup=back_keyboard()
         )
-        return EXPENSES
+        return COST_PRICE
 
 
 async def process_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,7 +206,7 @@ async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(PROCESSING_PHOTO)
     
     # Получаем фото
-    photo = update.message.photo[-1]  # Берем самое большое фото
+    photo = update.message.photo[-1]
     file = await photo.get_file()
     photo_bytes = await file.download_as_bytearray()
     
@@ -202,19 +214,25 @@ async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     values = extract_from_photo(photo_bytes)
     
     if values and len(values) >= 4:
-        # Пытаемся распознать данные
-        # Это зависит от структуры фото, делаем базовое предположение
-        context.user_data['sales'] = values[0]
-        context.user_data['checks'] = int(values[1]) if len(values) > 1 else 0
-        context.user_data['cost_price'] = values[2] if len(values) > 2 else 0
-        context.user_data['expenses'] = values[3] if len(values) > 3 else 0
-        
-        # Просим подтвердить или отредактировать дату
-        await update.message.reply_text(
-            f"✅ Данные распознаны!\n\n{ENTER_DATE}",
-            reply_markup=back_keyboard()
-        )
-        return DATE
+        # Попытка распознать данные
+        try:
+            context.user_data['sales'] = float(values[0])
+            context.user_data['checks'] = int(values[1]) if len(values) > 1 else 0
+            context.user_data['cost_price'] = float(values[2]) if len(values) > 2 else 0
+            context.user_data['expenses'] = float(values[3]) if len(values) > 3 else 0
+            
+            await update.message.reply_text(
+                f"✅ Данные распознаны!\n\n{ENTER_DATE}",
+                reply_markup=back_keyboard()
+            )
+            return DATE
+        except (ValueError, IndexError) as e:
+            logger.error(f"Error parsing photo values: {e}")
+            await update.message.reply_text(
+                f"{PHOTO_FAILED}\n\n{ENTER_DATE}",
+                reply_markup=back_keyboard()
+            )
+            return DATE
     else:
         await update.message.reply_text(
             f"{PHOTO_FAILED}\n\n{ENTER_DATE}",
@@ -242,13 +260,13 @@ async def confirm_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if success:
         await query.edit_message_text(
-            DATA_SAVED,
-            reply_markup=back_to_main_keyboard()
+            f"{DATA_SAVED}\n\nЧто хотите сделать дальше?",
+            reply_markup=main_menu_keyboard()
         )
     else:
         await query.edit_message_text(
-            "❌ Ошибка сохранения",
-            reply_markup=back_to_main_keyboard()
+            "❌ Ошибка сохранения. Попробуйте ещё раз.",
+            reply_markup=main_menu_keyboard()
         )
     
     # Очищаем данные
@@ -304,7 +322,19 @@ async def back_to_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к подтверждению"""
     query = update.callback_query
     await query.answer()
-    await show_confirmation(update, context)
+    
+    # Создаём фиктивное сообщение для show_confirmation
+    await query.edit_message_text(
+        f"""{CONFIRM_DATA}
+
+📅 {DATE_LABEL}: {context.user_data.get('date', 'N/A')} ({context.user_data.get('day_of_week', '')})
+💰 {SALES_LABEL}: {context.user_data.get('sales', 0):,.0f}
+🧾 {CHECKS_LABEL}: {context.user_data.get('checks', 0)}
+💸 {COST_PRICE_LABEL}: {context.user_data.get('cost_price', 0):,.0f}
+📉 {EXPENSES_LABEL}: {context.user_data.get('expenses', 0):,.0f}
+""",
+        reply_markup=confirm_keyboard()
+    )
     return CONFIRM
 
 
@@ -324,13 +354,13 @@ async def view_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=REPORT_GENERATED
             )
         await query.edit_message_text(
-            "✅ Отчёт отправлен",
-            reply_markup=back_to_main_keyboard()
+            "✅ Отчёт отправлен выше ☝️",
+            reply_markup=main_menu_keyboard()
         )
     else:
         await query.edit_message_text(
             NO_DATA,
-            reply_markup=back_to_main_keyboard()
+            reply_markup=main_menu_keyboard()
         )
     
     return MENU
@@ -352,13 +382,13 @@ async def view_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=analytics
             )
         await query.edit_message_text(
-            "✅ Аналитика отправлена",
-            reply_markup=back_to_main_keyboard()
+            "✅ Аналитика отправлена выше ☝️",
+            reply_markup=main_menu_keyboard()
         )
     else:
         await query.edit_message_text(
             NO_DATA,
-            reply_markup=back_to_main_keyboard()
+            reply_markup=main_menu_keyboard()
         )
     
     return MENU
@@ -396,8 +426,8 @@ async def process_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_targets_db(sales_target, net_profit_target, expenses_target, month, year)
         
         await update.message.reply_text(
-            TARGETS_SET,
-            reply_markup=back_to_main_keyboard()
+            f"{TARGETS_SET}\n\nЧто хотите сделать дальше?",
+            reply_markup=main_menu_keyboard()
         )
         return MENU
     except ValueError:
@@ -439,6 +469,30 @@ async def back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return METHOD
 
 
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в главное меню из любого места"""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await query.edit_message_text(
+        MAIN_MENU_TEXT,
+        reply_markup=main_menu_keyboard()
+    )
+    return MENU
+
+
+async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик неизвестных callback'ов"""
+    query = update.callback_query
+    await query.answer("⚠️ Неизвестная команда")
+    logger.warning(f"Unknown callback: {query.data}")
+    await query.edit_message_text(
+        "⚠️ Команда не распознана. Пожалуйста, нажмите /start для перезапуска.",
+        reply_markup=main_menu_keyboard()
+    )
+    return MENU
+
+
 def setup_handlers(application):
     """Регистрация всех обработчиков"""
     
@@ -449,6 +503,8 @@ def setup_handlers(application):
         ],
         states={
             MENU: [
+                # 🔥 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
+                CallbackQueryHandler(add_data_entry, pattern='^add_data$'),
                 CallbackQueryHandler(main_menu_callback, pattern='^main_menu$'),
                 CallbackQueryHandler(view_report, pattern='^view_report$'),
                 CallbackQueryHandler(view_analytics, pattern='^analytics$'),
@@ -457,27 +513,38 @@ def setup_handlers(application):
             METHOD: [
                 CallbackQueryHandler(method_manual, pattern='^method_manual$'),
                 CallbackQueryHandler(method_photo, pattern='^method_photo$'),
-                CallbackQueryHandler(main_menu_callback, pattern='^back_to_main$')
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
+                # На случай повторного нажатия кнопок меню
+                CallbackQueryHandler(add_data_entry, pattern='^add_data$'),
+                CallbackQueryHandler(view_report, pattern='^view_report$'),
+                CallbackQueryHandler(view_analytics, pattern='^analytics$'),
+                CallbackQueryHandler(set_targets, pattern='^set_targets$')
             ],
             DATE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_date),
-                CallbackQueryHandler(cancel, pattern='^back$')
+                CallbackQueryHandler(back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$')
             ],
             SALES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_sales)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_sales),
+                CallbackQueryHandler(back, pattern='^back$')
             ],
             CHECKS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_checks)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_checks),
+                CallbackQueryHandler(back, pattern='^back$')
             ],
             COST_PRICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_cost_price)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_cost_price),
+                CallbackQueryHandler(back, pattern='^back$')
             ],
             EXPENSES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_expenses)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_expenses),
+                CallbackQueryHandler(back, pattern='^back$')
             ],
             PHOTO: [
                 MessageHandler(filters.PHOTO, process_photo),
-                CallbackQueryHandler(cancel, pattern='^back$')
+                CallbackQueryHandler(back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$')
             ],
             CONFIRM: [
                 CallbackQueryHandler(confirm_data, pattern='^confirm$'),
@@ -490,7 +557,8 @@ def setup_handlers(application):
             ],
             TARGETS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_targets),
-                CallbackQueryHandler(cancel, pattern='^back$')
+                CallbackQueryHandler(back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$')
             ]
         },
         fallbacks=[
@@ -501,3 +569,6 @@ def setup_handlers(application):
     
     application.add_handler(CommandHandler('start', start))
     application.add_handler(conv_handler)
+    
+    # Fallback для неизвестных callbacks
+    application.add_handler(CallbackQueryHandler(unknown_callback))
