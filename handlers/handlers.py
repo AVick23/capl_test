@@ -7,6 +7,7 @@ from telegram.ext import (
     ConversationHandler,
     filters
 )
+from telegram.error import BadRequest
 from .constants import *
 from .keyboards import *
 from .utils import *
@@ -15,51 +16,149 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    # Если это сообщение (не callback)
-    if update.message:
-        await update.message.reply_text(
-            START_MESSAGE,
-            reply_markup=main_menu_keyboard()
-        )
-    # Если это callback (например, после /start в conversation)
-    elif update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
-            START_MESSAGE,
-            reply_markup=main_menu_keyboard()
-        )
-    return MENU
+# ============================================
+# HELPER: Безопасное редактирование сообщения
+# ============================================
+async def safe_edit_message(query, text, reply_markup=None):
+    """
+    Безопасно редактирует сообщение, игнорируя ошибку
+    'Message is not modified' (когда пытаемся изменить сообщение
+    на идентичное).
+    """
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise  # Пробрасываем другие ошибки дальше
+    except Exception as e:
+        logger.error(f"Ошибка редактирования сообщения: {e}")
 
 
-async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню"""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        WELCOME_BACK,
+# ============================================
+# ENTRY POINT: /start
+# ============================================
+async def start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Точка входа в ConversationHandler через /start"""
+    context.user_data.clear()
+    await update.message.reply_text(
+        START_MESSAGE,
         reply_markup=main_menu_keyboard()
     )
     return MENU
 
 
-async def add_data_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало добавления данных"""
+# ============================================
+# СОСТОЯНИЕ: MENU (главное меню)
+# ============================================
+async def menu_view_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отчёт из меню"""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
+    
+    await safe_edit_message(query, "⏳ Генерирую отчёт...")
+    
+    filename = generate_excel_report()
+    
+    if filename:
+        try:
+            with open(filename, 'rb') as f:
+                await query.message.reply_document(
+                    document=f,
+                    caption=REPORT_GENERATED
+                )
+            await safe_edit_message(
+                query,
+                "✅ Отчёт отправлен выше ☝️",
+                reply_markup=main_menu_keyboard()
+            )
+        except Exception as e:
+            logger.error(f"Ошибка отправки отчёта: {e}")
+            await safe_edit_message(
+                query,
+                "❌ Ошибка при отправке. Попробуйте ещё раз.",
+                reply_markup=main_menu_keyboard()
+            )
+    else:
+        await safe_edit_message(
+            query,
+            NO_DATA,
+            reply_markup=main_menu_keyboard()
+        )
+    
+    return MENU
+
+
+async def menu_view_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Аналитика из меню"""
+    query = update.callback_query
+    await query.answer()
+    
+    await safe_edit_message(query, "⏳ Генерирую аналитику...")
+    
+    filename, analytics = generate_dashboard()
+    
+    if filename:
+        try:
+            with open(filename, 'rb') as f:
+                await query.message.reply_photo(
+                    photo=f,
+                    caption=analytics
+                )
+            await safe_edit_message(
+                query,
+                "✅ Аналитика отправлена выше ☝️",
+                reply_markup=main_menu_keyboard()
+            )
+        except Exception as e:
+            logger.error(f"Ошибка отправки аналитики: {e}")
+            await safe_edit_message(
+                query,
+                "❌ Ошибка при отправке. Попробуйте ещё раз.",
+                reply_markup=main_menu_keyboard()
+            )
+    else:
+        await safe_edit_message(
+            query,
+            NO_DATA,
+            reply_markup=main_menu_keyboard()
+        )
+    
+    return MENU
+
+
+async def menu_set_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Установка целей из меню"""
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_message(
+        query,
+        TARGETS_INSTRUCTION,
+        reply_markup=back_keyboard()
+    )
+    return TARGETS
+
+
+async def menu_add_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало добавления данных из меню"""
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_message(
+        query,
         SELECT_METHOD,
         reply_markup=method_keyboard()
     )
     return METHOD
 
 
+# ============================================
+# СОСТОЯНИЕ: METHOD (выбор метода ввода)
+# ============================================
 async def method_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ручной ввод - запрос даты"""
+    """Ручной ввод"""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
+    await safe_edit_message(
+        query,
         ENTER_DATE,
         reply_markup=back_keyboard()
     )
@@ -70,13 +169,17 @@ async def method_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Загрузка фото"""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
+    await safe_edit_message(
+        query,
         "🖼 Отправьте фото отчёта",
         reply_markup=back_keyboard()
     )
     return PHOTO
 
 
+# ============================================
+# СОСТОЯНИЕ: DATE (ввод даты)
+# ============================================
 async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка даты"""
     date_str = update.message.text.strip()
@@ -99,6 +202,9 @@ async def process_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SALES
 
 
+# ============================================
+# СОСТОЯНИЕ: SALES (ввод продаж)
+# ============================================
 async def process_sales(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка продаж"""
     try:
@@ -120,6 +226,9 @@ async def process_sales(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SALES
 
 
+# ============================================
+# СОСТОЯНИЕ: CHECKS (ввод чеков)
+# ============================================
 async def process_checks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка чеков"""
     try:
@@ -141,6 +250,9 @@ async def process_checks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CHECKS
 
 
+# ============================================
+# СОСТОЯНИЕ: COST_PRICE (ввод себестоимости)
+# ============================================
 async def process_cost_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка себестоимости"""
     try:
@@ -162,6 +274,9 @@ async def process_cost_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return COST_PRICE
 
 
+# ============================================
+# СОСТОЯНИЕ: EXPENSES (ввод расходов)
+# ============================================
 async def process_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка расходов"""
     try:
@@ -170,8 +285,6 @@ async def process_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise ValueError
         
         context.user_data['expenses'] = expenses
-        
-        # Показываем подтверждение
         await show_confirmation(update, context)
         return CONFIRM
     except ValueError:
@@ -201,20 +314,20 @@ async def show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ============================================
+# СОСТОЯНИЕ: PHOTO (загрузка фото)
+# ============================================
 async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка фото"""
     await update.message.reply_text(PROCESSING_PHOTO)
     
-    # Получаем фото
     photo = update.message.photo[-1]
     file = await photo.get_file()
     photo_bytes = await file.download_as_bytearray()
     
-    # OCR
     values = extract_from_photo(photo_bytes)
     
     if values and len(values) >= 4:
-        # Попытка распознать данные
         try:
             context.user_data['sales'] = float(values[0])
             context.user_data['checks'] = int(values[1]) if len(values) > 1 else 0
@@ -227,7 +340,7 @@ async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return DATE
         except (ValueError, IndexError) as e:
-            logger.error(f"Error parsing photo values: {e}")
+            logger.error(f"Ошибка распознавания фото: {e}")
             await update.message.reply_text(
                 f"{PHOTO_FAILED}\n\n{ENTER_DATE}",
                 reply_markup=back_keyboard()
@@ -241,14 +354,16 @@ async def process_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DATE
 
 
+# ============================================
+# СОСТОЯНИЕ: CONFIRM (подтверждение)
+# ============================================
 async def confirm_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение и сохранение данных"""
+    """Подтверждение и сохранение"""
     query = update.callback_query
     await query.answer()
     
     data = context.user_data
     
-    # Сохраняем в БД
     success = add_data_to_db(
         data['date'],
         data['day_of_week'],
@@ -259,19 +374,19 @@ async def confirm_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     if success:
-        await query.edit_message_text(
+        await safe_edit_message(
+            query,
             f"{DATA_SAVED}\n\nЧто хотите сделать дальше?",
             reply_markup=main_menu_keyboard()
         )
     else:
-        await query.edit_message_text(
+        await safe_edit_message(
+            query,
             "❌ Ошибка сохранения. Попробуйте ещё раз.",
             reply_markup=main_menu_keyboard()
         )
     
-    # Очищаем данные
     context.user_data.clear()
-    
     return MENU
 
 
@@ -279,13 +394,30 @@ async def edit_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Редактирование данных"""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
+    await safe_edit_message(
+        query,
         EDIT_PROMPT,
         reply_markup=edit_keyboard()
     )
     return EDIT
 
 
+async def cancel_from_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена из подтверждения"""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await safe_edit_message(
+        query,
+        CANCELLED,
+        reply_markup=main_menu_keyboard()
+    )
+    return MENU
+
+
+# ============================================
+# СОСТОЯНИЕ: EDIT (редактирование)
+# ============================================
 async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Редактирование конкретного поля"""
     query = update.callback_query
@@ -310,7 +442,8 @@ async def edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'expenses': EXPENSES
     }
     
-    await query.edit_message_text(
+    await safe_edit_message(
+        query,
         messages[field],
         reply_markup=back_keyboard()
     )
@@ -323,88 +456,26 @@ async def back_to_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Создаём фиктивное сообщение для show_confirmation
-    await query.edit_message_text(
-        f"""{CONFIRM_DATA}
+    text = f"""{CONFIRM_DATA}
 
 📅 {DATE_LABEL}: {context.user_data.get('date', 'N/A')} ({context.user_data.get('day_of_week', '')})
 💰 {SALES_LABEL}: {context.user_data.get('sales', 0):,.0f}
 🧾 {CHECKS_LABEL}: {context.user_data.get('checks', 0)}
 💸 {COST_PRICE_LABEL}: {context.user_data.get('cost_price', 0):,.0f}
 📉 {EXPENSES_LABEL}: {context.user_data.get('expenses', 0):,.0f}
-""",
+"""
+    
+    await safe_edit_message(
+        query,
+        text,
         reply_markup=confirm_keyboard()
     )
     return CONFIRM
 
 
-async def view_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Просмотр отчёта"""
-    query = update.callback_query
-    await query.answer()
-    
-    await query.edit_message_text("⏳ Генерирую отчёт...")
-    
-    filename = generate_excel_report()
-    
-    if filename:
-        with open(filename, 'rb') as f:
-            await query.message.reply_document(
-                document=f,
-                caption=REPORT_GENERATED
-            )
-        await query.edit_message_text(
-            "✅ Отчёт отправлен выше ☝️",
-            reply_markup=main_menu_keyboard()
-        )
-    else:
-        await query.edit_message_text(
-            NO_DATA,
-            reply_markup=main_menu_keyboard()
-        )
-    
-    return MENU
-
-
-async def view_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Просмотр аналитики"""
-    query = update.callback_query
-    await query.answer()
-    
-    await query.edit_message_text("⏳ Генерирую аналитику...")
-    
-    filename, analytics = generate_dashboard()
-    
-    if filename:
-        with open(filename, 'rb') as f:
-            await query.message.reply_photo(
-                photo=f,
-                caption=analytics
-            )
-        await query.edit_message_text(
-            "✅ Аналитика отправлена выше ☝️",
-            reply_markup=main_menu_keyboard()
-        )
-    else:
-        await query.edit_message_text(
-            NO_DATA,
-            reply_markup=main_menu_keyboard()
-        )
-    
-    return MENU
-
-
-async def set_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Установка целей"""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        TARGETS_INSTRUCTION,
-        reply_markup=back_keyboard()
-    )
-    return TARGETS
-
-
+# ============================================
+# СОСТОЯНИЕ: TARGETS (установка целей)
+# ============================================
 async def process_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка целей"""
     try:
@@ -418,7 +489,6 @@ async def process_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         net_profit_target = float(values[1])
         expenses_target = float(values[2])
         
-        # Получаем текущий месяц и год
         now = datetime.now()
         month = now.strftime('%B')
         year = now.year
@@ -429,6 +499,7 @@ async def process_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{TARGETS_SET}\n\nЧто хотите сделать дальше?",
             reply_markup=main_menu_keyboard()
         )
+        context.user_data.clear()
         return MENU
     except ValueError:
         await update.message.reply_text(
@@ -438,14 +509,45 @@ async def process_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return TARGETS
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена действия"""
+# ============================================
+# НАВИГАЦИЯ: Кнопка "Назад"
+# ============================================
+async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка назад - возврат к выбору метода"""
+    query = update.callback_query
+    await query.answer()
+    await safe_edit_message(
+        query,
+        SELECT_METHOD,
+        reply_markup=method_keyboard()
+    )
+    return METHOD
+
+
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в главное меню"""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await safe_edit_message(
+        query,
+        MAIN_MENU_TEXT,
+        reply_markup=main_menu_keyboard()
+    )
+    return MENU
+
+
+# ============================================
+# FALLBACK: /cancel
+# ============================================
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена через /cancel"""
     context.user_data.clear()
     
     if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        await query.edit_message_text(
+        await update.callback_query.answer()
+        await safe_edit_message(
+            update.callback_query,
             CANCELLED,
             reply_markup=main_menu_keyboard()
         )
@@ -454,121 +556,90 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             CANCELLED,
             reply_markup=main_menu_keyboard()
         )
-    
     return MENU
 
 
-async def back(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Кнопка назад"""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        SELECT_METHOD,
-        reply_markup=method_keyboard()
-    )
-    return METHOD
-
-
-async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню из любого места"""
-    query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    await query.edit_message_text(
-        MAIN_MENU_TEXT,
-        reply_markup=main_menu_keyboard()
-    )
-    return MENU
-
-
-async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик неизвестных callback'ов"""
-    query = update.callback_query
-    await query.answer("⚠️ Неизвестная команда")
-    logger.warning(f"Unknown callback: {query.data}")
-    await query.edit_message_text(
-        "⚠️ Команда не распознана. Пожалуйста, нажмите /start для перезапуска.",
-        reply_markup=main_menu_keyboard()
-    )
-    return MENU
-
-
+# ============================================
+# НАСТРОЙКА ОБРАБОТЧИКОВ
+# ============================================
 def setup_handlers(application):
     """Регистрация всех обработчиков"""
     
-    # ConversationHandler для добавления данных
     conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(add_data_entry, pattern='^add_data$')
+            CommandHandler('start', start_entry)
         ],
         states={
+            # ГЛАВНОЕ МЕНЮ
             MENU: [
-                # 🔥 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ
-                CallbackQueryHandler(add_data_entry, pattern='^add_data$'),
-                CallbackQueryHandler(main_menu_callback, pattern='^main_menu$'),
-                CallbackQueryHandler(view_report, pattern='^view_report$'),
-                CallbackQueryHandler(view_analytics, pattern='^analytics$'),
-                CallbackQueryHandler(set_targets, pattern='^set_targets$')
+                CallbackQueryHandler(menu_add_data, pattern='^add_data$'),
+                CallbackQueryHandler(menu_view_report, pattern='^view_report$'),
+                CallbackQueryHandler(menu_view_analytics, pattern='^analytics$'),
+                CallbackQueryHandler(menu_set_targets, pattern='^set_targets$'),
             ],
+            # ВЫБОР МЕТОДА
             METHOD: [
                 CallbackQueryHandler(method_manual, pattern='^method_manual$'),
                 CallbackQueryHandler(method_photo, pattern='^method_photo$'),
                 CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
-                # На случай повторного нажатия кнопок меню
-                CallbackQueryHandler(add_data_entry, pattern='^add_data$'),
-                CallbackQueryHandler(view_report, pattern='^view_report$'),
-                CallbackQueryHandler(view_analytics, pattern='^analytics$'),
-                CallbackQueryHandler(set_targets, pattern='^set_targets$')
             ],
+            # ПОШАГОВЫЙ ВВОД
             DATE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_date),
-                CallbackQueryHandler(back, pattern='^back$'),
-                CallbackQueryHandler(back_to_main, pattern='^back_to_main$')
+                CallbackQueryHandler(go_back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
             ],
             SALES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_sales),
-                CallbackQueryHandler(back, pattern='^back$')
+                CallbackQueryHandler(go_back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
             ],
             CHECKS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_checks),
-                CallbackQueryHandler(back, pattern='^back$')
+                CallbackQueryHandler(go_back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
             ],
             COST_PRICE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_cost_price),
-                CallbackQueryHandler(back, pattern='^back$')
+                CallbackQueryHandler(go_back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
             ],
             EXPENSES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_expenses),
-                CallbackQueryHandler(back, pattern='^back$')
+                CallbackQueryHandler(go_back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
             ],
+            # ФОТО
             PHOTO: [
                 MessageHandler(filters.PHOTO, process_photo),
-                CallbackQueryHandler(back, pattern='^back$'),
-                CallbackQueryHandler(back_to_main, pattern='^back_to_main$')
+                CallbackQueryHandler(go_back, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
             ],
+            # ПОДТВЕРЖДЕНИЕ
             CONFIRM: [
                 CallbackQueryHandler(confirm_data, pattern='^confirm$'),
                 CallbackQueryHandler(edit_data, pattern='^edit$'),
-                CallbackQueryHandler(cancel, pattern='^cancel_add$')
+                CallbackQueryHandler(cancel_from_confirm, pattern='^cancel_add$'),
             ],
+            # РЕДАКТИРОВАНИЕ
             EDIT: [
                 CallbackQueryHandler(edit_field, pattern='^edit_'),
-                CallbackQueryHandler(back_to_confirm, pattern='^back_to_confirm$')
+                CallbackQueryHandler(back_to_confirm, pattern='^back_to_confirm$'),
             ],
+            # ЦЕЛИ
             TARGETS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_targets),
-                CallbackQueryHandler(back, pattern='^back$'),
-                CallbackQueryHandler(back_to_main, pattern='^back_to_main$')
-            ]
+                CallbackQueryHandler(back_to_main, pattern='^back$'),
+                CallbackQueryHandler(back_to_main, pattern='^back_to_main$'),
+            ],
         },
         fallbacks=[
-            CommandHandler('cancel', cancel),
-            CommandHandler('start', start)
-        ]
+            CommandHandler('cancel', cancel_command),
+        ],
+        # 🔥 КЛЮЧЕВЫЕ ПАРАМЕТРЫ:
+        per_message=False,  # Явно указываем, чтобы убрать Warning
+        name="pnl_bot_conversation",
+        persistent=False,
     )
     
-    application.add_handler(CommandHandler('start', start))
     application.add_handler(conv_handler)
-    
-    # Fallback для неизвестных callbacks
-    application.add_handler(CallbackQueryHandler(unknown_callback))
