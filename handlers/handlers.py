@@ -35,15 +35,26 @@ async def safe_edit_message(query, text, reply_markup=None):
 
 
 # ============================================
-# ENTRY POINT: /start
+# ENTRY POINT: /start (также используется как fallback)
 # ============================================
 async def start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Точка входа в ConversationHandler через /start"""
+    """Точка входа и сброс состояния при /start"""
     context.user_data.clear()
-    await update.message.reply_text(
-        START_MESSAGE,
-        reply_markup=main_menu_keyboard()
-    )
+    
+    # Если это callback_query (например, при нажатии кнопки), отвечаем
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await safe_edit_message(
+            query,
+            START_MESSAGE,
+            reply_markup=main_menu_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            START_MESSAGE,
+            reply_markup=main_menu_keyboard()
+        )
     return MENU
 
 
@@ -538,7 +549,7 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================
-# FALLBACK: /cancel
+# FALLBACK: /cancel и /start (сброс состояния)
 # ============================================
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена через /cancel"""
@@ -635,9 +646,9 @@ def setup_handlers(application):
         },
         fallbacks=[
             CommandHandler('cancel', cancel_command),
+            CommandHandler('start', start_entry),  # <-- добавлен для сброса состояния
         ],
-        # 🔥 КЛЮЧЕВЫЕ ПАРАМЕТРЫ:
-        per_message=False,  # Явно указываем, чтобы убрать Warning
+        per_message=False,
         name="pnl_bot_conversation",
         persistent=False,
     )

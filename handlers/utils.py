@@ -3,18 +3,20 @@ import pytesseract
 from PIL import Image
 import io
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import openpyxl
-from openpyxl import Workbook  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
+from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+import numpy as np
+import logging
+
 from config import DB_PATH
 from .constants import *
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -449,8 +451,28 @@ def generate_excel_report():
     return filename
 
 
+def forecast_linear(x, y, steps=7):
+    """
+    Линейный прогноз на steps дней вперёд.
+    Возвращает массив прогнозных значений.
+    """
+    if len(x) < 2:
+        return np.full(steps, y[-1] if y else 0)
+    
+    # x - индексы (0,1,2,...), y - значения
+    coeffs = np.polyfit(x, y, 1)
+    poly = np.poly1d(coeffs)
+    
+    # Прогноз на следующие steps дней
+    future_x = np.arange(len(x), len(x) + steps)
+    forecast = poly(future_x)
+    return forecast
+
+
 def generate_dashboard():
-    """Генерация дашборда"""
+    """
+    Генерация дашборда в стиле Apple с прогнозом.
+    """
     data = get_all_data()
     
     if not data:
@@ -465,88 +487,142 @@ def generate_dashboard():
     df['net_profit'] = df['gross_profit'] - df['expenses']
     df['avg_check'] = df['sales'] / df['checks']
     
-    # Создаём графики
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    fig.suptitle('Аналитика ПНЛ', fontsize=20, fontweight='bold')
+    # Прогноз на 7 дней (линейный тренд)
+    x = np.arange(len(df))
+    sales_forecast = forecast_linear(x, df['sales'].values, steps=7)
+    profit_forecast = forecast_linear(x, df['net_profit'].values, steps=7)
+    check_forecast = forecast_linear(x, df['avg_check'].values, steps=7)
     
-    # 1. Продажи по дням
-    ax1 = axes[0, 0]
-    ax1.bar(df['date'], df['sales'], color='#4472C4', alpha=0.8)
-    ax1.set_title('Продажи по дням', fontsize=14, fontweight='bold')
-    ax1.set_xlabel('Дата')
-    ax1.set_ylabel('Сумма')
-    ax1.tick_params(axis='x', rotation=45)
-    ax1.grid(axis='y', alpha=0.3)
+    # Создаём фигуру с 3 основными графиками + 1 для прогноза
+    fig = plt.figure(figsize=(18, 12))
+    fig.patch.set_facecolor('white')
     
-    # 2. Чистая прибыль
-    ax2 = axes[0, 1]
-    colors = ['#2ecc71' if p >= 0 else '#e74c3c' for p in df['net_profit']]
-    ax2.bar(df['date'], df['net_profit'], color=colors, alpha=0.8)
-    ax2.axhline(y=0, color='black', linewidth=1, linestyle='--')
-    ax2.set_title('Чистая прибыль', fontsize=14, fontweight='bold')
-    ax2.set_xlabel('Дата')
-    ax2.set_ylabel('Сумма')
-    ax2.tick_params(axis='x', rotation=45)
-    ax2.grid(axis='y', alpha=0.3)
+    # Стиль Apple: чистый, sans-serif, серые линии
+    plt.rcParams['font.family'] = 'Helvetica Neue, Arial, sans-serif'
+    plt.rcParams['axes.edgecolor'] = '#d0d0d0'
+    plt.rcParams['axes.linewidth'] = 0.5
+    plt.rcParams['grid.color'] = '#f0f0f0'
     
-    # 3. Средний чек
-    ax3 = axes[1, 0]
-    ax3.plot(df['date'], df['avg_check'], marker='o', linewidth=2, color='#f39c12')
-    ax3.fill_between(df['date'], df['avg_check'], alpha=0.3, color='#f39c12')
-    ax3.set_title('Средний чек', fontsize=14, fontweight='bold')
-    ax3.set_xlabel('Дата')
-    ax3.set_ylabel('Сумма')
-    ax3.tick_params(axis='x', rotation=45)
-    ax3.grid(alpha=0.3)
+    # 1. Продажи и прогноз
+    ax1 = plt.subplot(2, 2, 1)
+    ax1.set_facecolor('white')
+    ax1.bar(df['date'], df['sales'], color='#007AFF', alpha=0.7, label='Факт')
+    # Добавляем прогноз (линия)
+    future_dates = [f"прогноз {i+1}" for i in range(7)]  # подписи для прогноза
+    all_dates = list(df['date']) + future_dates
+    all_sales = list(df['sales']) + list(sales_forecast)
+    ax1.plot(all_dates, all_sales, '--', color='#FF9500', linewidth=2, label='Прогноз')
+    ax1.set_title('Продажи и прогноз', fontsize=16, fontweight='bold', color='#1C1C1E')
+    ax1.set_xticklabels(all_dates, rotation=45, ha='right', fontsize=8)
+    ax1.grid(axis='y', linestyle='--', alpha=0.4)
+    ax1.legend(loc='upper left')
+    # Аннотация с суммой
+    total_sales = df['sales'].sum()
+    ax1.text(0.02, 0.95, f'Всего: {total_sales:,.0f}', transform=ax1.transAxes,
+             fontsize=12, verticalalignment='top', bbox=dict(facecolor='white', alpha=0.8))
     
-    # 4. Структура расходов
-    ax4 = axes[1, 1]
+    # 2. Чистая прибыль и прогноз
+    ax2 = plt.subplot(2, 2, 2)
+    ax2.set_facecolor('white')
+    colors = ['#34C759' if p >= 0 else '#FF3B30' for p in df['net_profit']]
+    ax2.bar(df['date'], df['net_profit'], color=colors, alpha=0.7, label='Факт')
+    all_profit = list(df['net_profit']) + list(profit_forecast)
+    ax2.plot(all_dates, all_profit, '--', color='#FF9500', linewidth=2, label='Прогноз')
+    ax2.axhline(y=0, color='#8E8E93', linewidth=0.5, linestyle='-')
+    ax2.set_title('Чистая прибыль и прогноз', fontsize=16, fontweight='bold', color='#1C1C1E')
+    ax2.set_xticklabels(all_dates, rotation=45, ha='right', fontsize=8)
+    ax2.grid(axis='y', linestyle='--', alpha=0.4)
+    ax2.legend(loc='upper left')
+    total_profit = df['net_profit'].sum()
+    ax2.text(0.02, 0.95, f'Всего: {total_profit:,.0f}', transform=ax2.transAxes,
+             fontsize=12, verticalalignment='top', bbox=dict(facecolor='white', alpha=0.8))
+    
+    # 3. Средний чек и прогноз
+    ax3 = plt.subplot(2, 2, 3)
+    ax3.set_facecolor('white')
+    ax3.plot(df['date'], df['avg_check'], marker='o', color='#007AFF', linewidth=2, label='Факт')
+    all_check = list(df['avg_check']) + list(check_forecast)
+    ax3.plot(all_dates, all_check, '--', color='#FF9500', linewidth=2, label='Прогноз')
+    ax3.set_title('Средний чек и прогноз', fontsize=16, fontweight='bold', color='#1C1C1E')
+    ax3.set_xticklabels(all_dates, rotation=45, ha='right', fontsize=8)
+    ax3.grid(axis='y', linestyle='--', alpha=0.4)
+    ax3.legend(loc='upper left')
+    avg_check_mean = df['avg_check'].mean()
+    ax3.text(0.02, 0.95, f'Средний: {avg_check_mean:,.0f}', transform=ax3.transAxes,
+             fontsize=12, verticalalignment='top', bbox=dict(facecolor='white', alpha=0.8))
+    
+    # 4. Структура (пирог) + метрики
+    ax4 = plt.subplot(2, 2, 4)
+    ax4.set_facecolor('white')
     total_cost = df['cost'].sum()
     total_expenses = df['expenses'].sum()
-    total_profit = df['net_profit'].sum()
+    total_profit_pie = df['net_profit'].sum()
     
-    if total_profit > 0:
-        sizes = [total_cost, total_expenses, total_profit]
+    if total_profit_pie > 0:
+        sizes = [total_cost, total_expenses, total_profit_pie]
         labels = ['Себестоимость', 'Расходы', 'Прибыль']
-        colors_pie = ['#3498db', '#e74c3c', '#2ecc71']
+        colors_pie = ['#8E8E93', '#FF3B30', '#34C759']
     else:
         sizes = [total_cost, total_expenses]
         labels = ['Себестоимость', 'Расходы']
-        colors_pie = ['#3498db', '#e74c3c']
+        colors_pie = ['#8E8E93', '#FF3B30']
     
-    ax4.pie(sizes, labels=labels, colors=colors_pie, autopct='%1.1f%%', startangle=90)
-    ax4.set_title('Структура', fontsize=14, fontweight='bold')
+    ax4.pie(sizes, labels=labels, colors=colors_pie, autopct='%1.1f%%',
+            startangle=90, textprops={'fontsize': 12},
+            wedgeprops={'edgecolor': 'white', 'linewidth': 1})
+    ax4.set_title('Структура затрат и прибыли', fontsize=16, fontweight='bold', color='#1C1C1E')
+    
+    # Добавляем текстовые метрики под графиком или в углу
+    metrics_text = f"Продажи: {total_sales:,.0f}\nПрибыль: {total_profit_pie:,.0f}\nРасходы: {total_expenses:,.0f}"
+    ax4.text(-1.2, -1.2, metrics_text, transform=ax4.transAxes,
+             fontsize=11, verticalalignment='bottom',
+             bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'))
     
     plt.tight_layout()
     
     # Сохраняем
     filename = 'dashboard.png'
-    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.savefig(filename, dpi=180, bbox_inches='tight', facecolor='white')
     plt.close()
     
-    # Генерируем текстовую аналитику
-    analytics = generate_analytics_text(df)
+    # Генерируем расширенную аналитику с прогнозом
+    analytics = generate_analytics_text(df, sales_forecast, profit_forecast, check_forecast)
     
     return filename, analytics
 
 
-def generate_analytics_text(df):
-    """Генерация текстовой аналитики"""
+def generate_analytics_text(df, sales_forecast, profit_forecast, check_forecast):
+    """
+    Генерация текстовой аналитики с прогнозными значениями.
+    """
     total_sales = df['sales'].sum()
     total_profit = df['net_profit'].sum()
     total_expenses = df['expenses'].sum()
     total_cost = df['cost'].sum()
     days = len(df)
     
-    avg_daily_sales = total_sales / days
-    avg_daily_profit = total_profit / days
+    avg_daily_sales = total_sales / days if days > 0 else 0
+    avg_daily_profit = total_profit / days if days > 0 else 0
+    avg_check = df['avg_check'].mean() if days > 0 else 0
+    
+    # Прогнозные значения (суммарно за 7 дней)
+    forecast_sales_sum = sales_forecast.sum() if len(sales_forecast) > 0 else 0
+    forecast_profit_sum = profit_forecast.sum() if len(profit_forecast) > 0 else 0
+    
+    # Среднедневной прирост (коэффициент тренда)
+    if len(df) >= 2:
+        sales_slope = np.polyfit(np.arange(len(df)), df['sales'], 1)[0]
+        profit_slope = np.polyfit(np.arange(len(df)), df['net_profit'], 1)[0]
+    else:
+        sales_slope = 0
+        profit_slope = 0
     
     text = "📊 АНАЛИТИКА\n\n"
     
     # Основные показатели
     text += f"💰 Продажи: {total_sales:,.0f}\n"
-    text += f"💸 Себестоимость: {total_cost:,.0f} ({total_cost/total_sales*100:.1f}%)\n"
-    text += f"📉 Расходы: {total_expenses:,.0f} ({total_expenses/total_sales*100:.1f}%)\n"
+    text += f"💸 Себестоимость: {total_cost:,.0f} ({total_cost/total_sales*100:.1f}%)\n" if total_sales > 0 else "💸 Себестоимость: 0\n"
+    text += f"📉 Расходы: {total_expenses:,.0f} ({total_expenses/total_sales*100:.1f}%)\n" if total_sales > 0 else "📉 Расходы: 0\n"
     text += f"📈 Чистая прибыль: {total_profit:,.0f}\n\n"
     
     # Что хорошо
@@ -557,15 +633,15 @@ def generate_analytics_text(df):
         good.append(f"✅ Средний день: {avg_daily_profit:,.0f}")
     
     text += "🟢 ХОРОШО:\n"
-    text += "\n".join(good) if good else "—暂无\n"
+    text += "\n".join(good) if good else "— нет замечаний\n"
     
     # Что плохо
     bad = []
     if total_profit < 0:
         bad.append(f"❌ Убыток: {total_profit:,.0f}")
-    if total_expenses / total_sales > 0.5:
+    if total_expenses / total_sales > 0.5 if total_sales > 0 else False:
         bad.append(f"❌ Высокие расходы: {total_expenses/total_sales*100:.1f}%")
-    if total_cost / total_sales > 0.4:
+    if total_cost / total_sales > 0.4 if total_sales > 0 else False:
         bad.append(f"❌ Высокая себестоимость: {total_cost/total_sales*100:.1f}%")
     
     text += "\n🔴 ПЛОХО:\n"
@@ -575,6 +651,11 @@ def generate_analytics_text(df):
     text += f"\n📊 СРЕДНИЕ:\n"
     text += f"• Продажи/день: {avg_daily_sales:,.0f}\n"
     text += f"• Прибыль/день: {avg_daily_profit:,.0f}\n"
-    text += f"• Средний чек: {df['avg_check'].mean():,.0f}\n"
+    text += f"• Средний чек: {avg_check:,.0f}\n\n"
+    
+    # Прогноз
+    text += "📈 ПРОГНОЗ НА 7 ДНЕЙ (линейный тренд):\n"
+    text += f"• Ожидаемые продажи: {forecast_sales_sum:,.0f} (среднедневной прирост {sales_slope:,.0f})\n"
+    text += f"• Ожидаемая прибыль: {forecast_profit_sum:,.0f} (среднедневной прирост {profit_slope:,.0f})\n"
     
     return text
