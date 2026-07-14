@@ -6,11 +6,12 @@ import re
 from datetime import datetime
 import pandas as pd
 import openpyxl
+from openpyxl import Workbook  # <-- ДОБАВИТЬ ЭТУ СТРОКУ
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # Для серверного режима без GUI
+matplotlib.use('Agg')
 from config import DB_PATH
 from .constants import *
 import logging
@@ -195,7 +196,7 @@ def generate_excel_report():
         expenses_target = 300000
     
     # Создаем workbook
-    wb = Workbook()
+    wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "ПНЛ"
     
