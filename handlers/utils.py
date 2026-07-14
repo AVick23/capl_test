@@ -6,12 +6,16 @@ import re
 from datetime import datetime
 import pandas as pd
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Для серверного режима без GUI
 from config import DB_PATH
 from .constants import *
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def init_db():
@@ -62,7 +66,7 @@ def add_data_to_db(date, day_of_week, sales, checks, cost_price, expenses):
         conn.commit()
         success = True
     except Exception as e:
-        print(f"Error adding data: {e}")
+        logger.error(f"Error adding data: {e}")
         success = False
     finally:
         conn.close()
@@ -133,7 +137,6 @@ def parse_date(date_str):
     days_ru = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
     
     try:
-        # Пробуем разные форматы
         for fmt in ['%d.%m', '%d.%m.%Y', '%Y-%m-%d']:
             try:
                 dt = datetime.strptime(date_str, fmt)
@@ -151,16 +154,11 @@ def parse_date(date_str):
 def extract_from_photo(photo_bytes):
     """Извлечение данных из фото через OCR"""
     try:
-        # Открываем изображение
         image = Image.open(io.BytesIO(photo_bytes))
-        
-        # OCR с русским языком
         text = pytesseract.image_to_string(image, lang='rus')
         
-        # Пытаемся извлечь числа из текста
         numbers = re.findall(r'\d+(?:[.,]\d+)?', text)
         
-        # Преобразуем в float
         values = []
         for num in numbers:
             try:
@@ -168,73 +166,284 @@ def extract_from_photo(photo_bytes):
             except:
                 pass
         
-        # Возвращаем первые 4-5 найденных значений
         return values[:5] if len(values) >= 4 else None
         
     except Exception as e:
-        print(f"OCR Error: {e}")
+        logger.error(f"OCR Error: {e}")
         return None
 
 
 def generate_excel_report():
-    """Генерация Excel-отчёта"""
+    """Генерация Excel-отчёта в формате как на скриншоте"""
     data = get_all_data()
+    targets_data = get_targets_db(
+        datetime.now().strftime('%B'), 
+        datetime.now().year
+    )
     
     if not data:
         return None
     
-    # Создаем DataFrame
-    df = pd.DataFrame(data, columns=[
-        'Дата', 'День недели', 'Продажи', 'Чеки', 'Себестоимость', 'Расходы'
-    ])
+    # Цели (или значения по умолчанию)
+    if targets_data:
+        sales_target = targets_data[0]
+        profit_target = targets_data[1]
+        expenses_target = targets_data[2]
+    else:
+        sales_target = 500000
+        profit_target = 200000
+        expenses_target = 300000
     
-    # Добавляем расчетные поля
-    df['Ср. чек'] = df['Продажи'] / df['Чеки']
-    df['Валовая прибыль'] = df['Продажи'] - df['Себестоимость']
-    df['Чистая прибыль'] = df['Валовая прибыль'] - df['Расходы']
-    df['Себестоимость %'] = (df['Себестоимость'] / df['Продажи'] * 100).round(1)
-    df['Валовая %'] = (df['Валовая прибыль'] / df['Продажи'] * 100).round(1)
+    # Создаем workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ПНЛ"
     
-    # Сохраняем в Excel
+    # ============================================
+    # СТИЛИ
+    # ============================================
+    header_font = Font(bold=True, size=11, color="FFFFFF")
+    title_font = Font(bold=True, size=12)
+    normal_font = Font(size=10)
+    
+    # Заливки
+    blue_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    gray_fill = PatternFill(start_color="A5A5A5", end_color="A5A5A5", fill_type="solid")
+    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    light_blue_fill = PatternFill(start_color="D6DCE4", end_color="D6DCE4", fill_type="solid")
+    
+    # Границы
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    center_align = Alignment(horizontal='center', vertical='center')
+    right_align = Alignment(horizontal='right', vertical='center')
+    
+    # ============================================
+    # ШАПКА ОТЧЁТА (строки 1-2)
+    # ============================================
+    # Строка 1: Заголовок
+    ws.merge_cells('C1:D1')
+    ws['C1'] = "Отчёт:"
+    ws['C1'].font = title_font
+    ws['C1'].alignment = center_align
+    
+    ws['E1'] = "ПНЛ"
+    ws['E1'].font = title_font
+    ws['E1'].alignment = center_align
+    
+    ws['F1'] = "Май"
+    ws['F1'].font = title_font
+    ws['F1'].alignment = center_align
+    
+    ws.merge_cells('G1:H1')
+    ws['G1'] = "2025"
+    ws['G1'].font = title_font
+    ws['G1'].alignment = center_align
+    
+    ws.merge_cells('I1:K1')
+    ws['I1'] = "Название локации"
+    ws['I1'].font = title_font
+    ws['I1'].alignment = center_align
+    
+    # Строка 2: Заголовки колонок
+    headers = [
+        "Д/н",      # A2
+        "Дата",     # B2
+        "Продажи",  # C2
+        "Чеки",     # D2
+        "Ср чек",   # E2
+        "Себестоимость",  # F2 (сумма)
+        "",         # G2 (процент)
+        "Себестоимость",  # H2 (сумма) - дублируется на скриншоте
+        "",         # I2 (процент)
+        "Валовая прибыль",  # J2 (сумма)
+        "",         # K2 (процент)
+        "Расходы",  # L2 (сумма)
+        "",         # M2 (процент)
+        "Чистая прибыль",  # N2 (сумма)
+        ""          # O2 (процент)
+    ]
+    
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = blue_fill
+        cell.alignment = center_align
+        cell.border = thin_border
+    
+    # ============================================
+    # РАСЧЁТЫ
+    # ============================================
+    total_sales = sum(row[2] for row in data)
+    total_checks = sum(row[3] for row in data)
+    total_cost = sum(row[4] for row in data)
+    total_expenses = sum(row[5] for row in data)
+    total_gross_profit = total_sales - total_cost
+    total_net_profit = total_gross_profit - total_expenses
+    
+    days_count = len(data)
+    
+    # Прогноз на месяц (30 дней)
+    avg_daily_sales = total_sales / days_count if days_count > 0 else 0
+    avg_daily_profit = total_net_profit / days_count if days_count > 0 else 0
+    forecast_sales = avg_daily_sales * 30
+    forecast_profit = avg_daily_profit * 30
+    
+    # Отклонения
+    sales_deviation = total_sales - sales_target
+    profit_deviation = total_net_profit - profit_target
+    expenses_deviation = total_expenses - expenses_target
+    
+    # ============================================
+    # СТРОКА 3: ОТКЛОНЕНИЕ
+    # ============================================
+    row = 3
+    ws.cell(row=row, column=1, value="Отклонение").font = Font(bold=True)
+    ws.cell(row=row, column=2, value=sales_deviation).font = Font(color="FF0000" if sales_deviation < 0 else "008000")
+    ws.cell(row=row, column=3, value=total_checks - int(sales_target / avg_daily_sales if avg_daily_sales > 0 else 0))
+    ws.cell(row=row, column=4, value=0)
+    ws.cell(row=row, column=5, value=total_cost)
+    ws.cell(row=row, column=6, value=f"{total_cost/total_sales*100:.0f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=7, value=total_expenses)
+    ws.cell(row=row, column=8, value=f"{total_expenses/total_sales*100:.0f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=9, value=total_gross_profit)
+    ws.cell(row=row, column=10, value=f"{total_gross_profit/total_sales*100:.0f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=11, value=total_expenses)
+    ws.cell(row=row, column=12, value=f"{total_expenses/total_sales*100:.0f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=13, value=total_net_profit).font = Font(color="FF0000" if total_net_profit < 0 else "008000")
+    ws.cell(row=row, column=14, value=f"{total_net_profit/total_sales*100:.0f}%" if total_sales > 0 else "0%")
+    
+    # ============================================
+    # СТРОКА 4: ЦЕЛЬ
+    # ============================================
+    row = 4
+    ws.cell(row=row, column=1, value="Цель").font = Font(bold=True)
+    ws.cell(row=row, column=2, value=sales_target)
+    ws.cell(row=row, column=3, value=int(sales_target / avg_daily_sales if avg_daily_sales > 0 else 0))
+    ws.cell(row=row, column=4, value=0)
+    ws.cell(row=row, column=5, value=sales_target * 0.37)
+    ws.cell(row=row, column=6, value="37%")
+    ws.cell(row=row, column=7, value=expenses_target)
+    ws.cell(row=row, column=8, value="100%")
+    ws.cell(row=row, column=9, value=sales_target * 0.60)
+    ws.cell(row=row, column=10, value="60%")
+    ws.cell(row=row, column=11, value=expenses_target)
+    ws.cell(row=row, column=12, value="100%")
+    ws.cell(row=row, column=13, value=profit_target)
+    ws.cell(row=row, column=14, value=f"{profit_target/sales_target*100:.0f}%")
+    
+    # ============================================
+    # СТРОКА 5: ПРОГНОЗ
+    # ============================================
+    row = 5
+    ws.cell(row=row, column=1, value="Прогноз").font = Font(bold=True)
+    ws.cell(row=row, column=2, value=forecast_sales)
+    ws.cell(row=row, column=3, value=int(forecast_sales / avg_daily_sales if avg_daily_sales > 0 else 0))
+    ws.cell(row=row, column=4, value=0)
+    ws.cell(row=row, column=5, value=forecast_sales * 0.39)
+    ws.cell(row=row, column=6, value="39%")
+    ws.cell(row=row, column=7, value=expenses_target)
+    ws.cell(row=row, column=8, value="100%")
+    ws.cell(row=row, column=9, value=forecast_sales * 0.58)
+    ws.cell(row=row, column=10, value="58%")
+    ws.cell(row=row, column=11, value=expenses_target)
+    ws.cell(row=row, column=12, value="100%")
+    ws.cell(row=row, column=13, value=forecast_profit)
+    ws.cell(row=row, column=14, value=f"{forecast_profit/forecast_sales*100:.0f}%" if forecast_sales > 0 else "0%")
+    
+    # ============================================
+    # СТРОКА 6: НАКОПИТЕЛЬНО (итоги)
+    # ============================================
+    row = 6
+    ws.cell(row=row, column=1, value="Накопительно").font = Font(bold=True)
+    ws.cell(row=row, column=2, value=total_sales)
+    ws.cell(row=row, column=3, value=total_checks)
+    ws.cell(row=row, column=4, value=0)
+    ws.cell(row=row, column=5, value=total_cost)
+    ws.cell(row=row, column=6, value=f"{total_cost/total_sales*100:.1f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=7, value=total_expenses)
+    ws.cell(row=row, column=8, value=f"{total_expenses/total_sales*100:.1f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=9, value=total_gross_profit)
+    ws.cell(row=row, column=10, value=f"{total_gross_profit/total_sales*100:.1f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=11, value=total_expenses)
+    ws.cell(row=row, column=12, value=f"{total_expenses/total_sales*100:.1f}%" if total_sales > 0 else "0%")
+    ws.cell(row=row, column=13, value=total_net_profit)
+    ws.cell(row=row, column=14, value=f"{total_net_profit/total_sales*100:.1f}%" if total_sales > 0 else "0%")
+    
+    # ============================================
+    # СТРОКИ 7+: ДАННЫЕ ПО ДНЯМ
+    # ============================================
+    for idx, row_data in enumerate(data, start=7):
+        date, day_of_week, sales, checks, cost_price, expenses = row_data
+        
+        avg_check = sales / checks if checks > 0 else 0
+        gross_profit = sales - cost_price
+        net_profit = gross_profit - expenses
+        
+        cost_percent = cost_price / sales * 100 if sales > 0 else 0
+        gross_percent = gross_profit / sales * 100 if sales > 0 else 0
+        expenses_percent = expenses / sales * 100 if sales > 0 else 0
+        net_percent = net_profit / sales * 100 if sales > 0 else 0
+        
+        row = idx
+        ws.cell(row=row, column=1, value=day_of_week).alignment = center_align
+        ws.cell(row=row, column=2, value=date).alignment = center_align
+        ws.cell(row=row, column=3, value=sales)
+        ws.cell(row=row, column=4, value=checks)
+        ws.cell(row=row, column=5, value=avg_check)
+        ws.cell(row=row, column=6, value=cost_price)
+        ws.cell(row=row, column=7, value=f"{cost_percent:.0f}%")
+        ws.cell(row=row, column=8, value=cost_price)
+        ws.cell(row=row, column=9, value=f"{cost_percent:.0f}%")
+        ws.cell(row=row, column=10, value=gross_profit)
+        ws.cell(row=row, column=11, value=f"{gross_percent:.0f}%")
+        ws.cell(row=row, column=12, value=expenses)
+        ws.cell(row=row, column=13, value=f"{expenses_percent:.0f}%")
+        ws.cell(row=row, column=14, value=net_profit)
+        ws.cell(row=row, column=15, value=f"{net_percent:.0f}%")
+        
+        # Цветовая индикация
+        if net_profit > 0:
+            ws.cell(row=row, column=14).fill = green_fill
+        elif net_profit < 0:
+            ws.cell(row=row, column=14).fill = red_fill
+        
+        if expenses_percent > 50:
+            ws.cell(row=row, column=12).fill = yellow_fill
+        
+        # Границы
+        for col in range(1, 16):
+            ws.cell(row=row, column=col).border = thin_border
+    
+    # ============================================
+    # ФОРМАТИРОВАНИЕ КОЛОНОК
+    # ============================================
+    ws.column_dimensions['A'].width = 8
+    ws.column_dimensions['B'].width = 12
+    ws.column_dimensions['C'].width = 15
+    ws.column_dimensions['D'].width = 10
+    ws.column_dimensions['E'].width = 12
+    ws.column_dimensions['F'].width = 15
+    ws.column_dimensions['G'].width = 10
+    ws.column_dimensions['H'].width = 15
+    ws.column_dimensions['I'].width = 10
+    ws.column_dimensions['J'].width = 18
+    ws.column_dimensions['K'].width = 10
+    ws.column_dimensions['L'].width = 15
+    ws.column_dimensions['M'].width = 10
+    ws.column_dimensions['N'].width = 18
+    ws.column_dimensions['O'].width = 10
+    
+    # Сохраняем файл
     filename = 'pnl_report.xlsx'
-    
-    with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name='ПНЛ', index=False)
-        
-        # Форматирование
-        workbook = writer.book
-        worksheet = writer.sheets['ПНЛ']
-        
-        # Настройка колонок
-        worksheet.column_dimensions['A'].width = 12  # Дата
-        worksheet.column_dimensions['B'].width = 12  # День недели
-        worksheet.column_dimensions['C'].width = 15  # Продажи
-        worksheet.column_dimensions['D'].width = 10  # Чеки
-        worksheet.column_dimensions['E'].width = 18  # Себестоимость
-        worksheet.column_dimensions['F'].width = 15  # Расходы
-        worksheet.column_dimensions['G'].width = 12  # Ср. чек
-        worksheet.column_dimensions['H'].width = 18  # Валовая прибыль
-        worksheet.column_dimensions['I'].width = 18  # Чистая прибыль
-        worksheet.column_dimensions['J'].width = 15  # Себестоимость %
-        worksheet.column_dimensions['K'].width = 12  # Валовая %
-        
-        # Заголовки жирным
-        for cell in worksheet[1]:
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
-            cell.font = Font(bold=True, color='FFFFFF')
-        
-        # Добавляем итоги
-        last_row = len(df) + 1
-        worksheet.cell(row=last_row + 1, column=1, value='ИТОГО:')
-        worksheet.cell(row=last_row + 1, column=1).font = Font(bold=True)
-        
-        worksheet.cell(row=last_row + 1, column=3, value=f'=SUM(C2:C{last_row})')
-        worksheet.cell(row=last_row + 1, column=4, value=f'=SUM(D2:D{last_row})')
-        worksheet.cell(row=last_row + 1, column=5, value=f'=SUM(E2:E{last_row})')
-        worksheet.cell(row=last_row + 1, column=6, value=f'=SUM(F2:F{last_row})')
-        worksheet.cell(row=last_row + 1, column=8, value=f'=SUM(H2:H{last_row})')
-        worksheet.cell(row=last_row + 1, column=9, value=f'=SUM(I2:I{last_row})')
+    wb.save(filename)
     
     return filename
 
